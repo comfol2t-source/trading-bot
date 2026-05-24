@@ -86,7 +86,7 @@ def section_macro(items: list[dict]) -> list[str]:
 def section_gold_fx(items: list[dict]) -> list[str]:
     if not items:
         return []
-    lines = ["🥇 <b>Gold &amp; FX</b>"]
+    lines = ["💱 <b>Currencies &amp; Gold</b>"]
     lines.extend(format_compact(d) for d in items)
     return lines + [""]
 
@@ -282,7 +282,7 @@ def build_heat_only() -> str:
 
 
 def build_macro_only() -> str:
-    lines = _header("Macro + Gold + FX")
+    lines = _header("Macro + Currencies + Gold")
     lines += section_macro(fetch_multiple(config.MACRO))
     lines += section_gold_fx(fetch_multiple(config.GOLD_FX))
     crypto = fetch_multiple(config.CRYPTO_SPOT)

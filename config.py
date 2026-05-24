@@ -49,9 +49,14 @@ US_THEMES = {
     "Energy (US)": ["XOM", "CVX", "COP", "OXY", "EOG", "SLB"],
     "Medical (US)": ["UNH", "JNJ", "LLY", "PFE", "MRK", "ABBV"],
     "Retail": ["AMZN", "WMT", "COST", "TGT", "HD"],
-    "Consumer Staples": ["PG", "KO", "PEP", "MCD"],
     "Industrials": ["BA", "GE", "CAT", "DE"],
-    "Gold Mining": ["NEM", "GOLD", "FNV", "WPM", "AEM", "AU"],
+    "Rare Earth & Critical Minerals": [
+        "MP",      # MP Materials — biggest US pure-play
+        "USAR",    # USA Rare Earth
+        "TMC",     # TMC the metals company (battery metals)
+        "REMX",    # VanEck Rare Earth ETF
+        "LYSCF",   # Lynas Rare Earths (Australia OTC)
+    ],
 }
 
 US_WATCHLIST = [t for tickers in US_THEMES.values() for t in tickers]
@@ -80,8 +85,16 @@ THAI_WATCHLIST = [t for tickers in THAI_THEMES.values() for t in tickers]
 # Macro indicators
 MACRO = ["DX-Y.NYB", "^TNX", "^VIX", "SPY", "QQQ"]
 
-# Gold + FX
-GOLD_FX = ["GC=F", "GLD", "THB=X"]
+# Gold + Currencies
+GOLD_FX = [
+    "GC=F",        # Gold futures (USD/oz)
+    "THB=X",       # USD/THB — Thai gold price proxy
+    "JPY=X",       # USD/JPY — safe-haven currency
+    "EURUSD=X",    # EUR/USD — major
+    "GBPUSD=X",    # GBP/USD — major
+    "CNY=X",       # USD/CNY — China impact
+    "AUDUSD=X",    # AUD/USD — commodity currency
+]
 
 
 # === Runner tags 🚀 — high-volatility momentum stocks ===
@@ -100,6 +113,8 @@ RUNNERS = {
     # Crypto miners
     "MARA", "CLSK", "RIOT", "HUT",
     "MSTR", "COIN",
+    # Rare earth (small caps + high volatility)
+    "MP", "USAR", "TMC",
 }
 
 

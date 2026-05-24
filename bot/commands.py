@@ -130,16 +130,48 @@ def _ticker(t: str) -> str:
 
 
 def _ipo() -> str:
-    items = get_ipo_calendar(7)
+    """IPO calendar — split into 7d / 8-15d / 16-30d sections."""
+    from datetime import datetime, timedelta
+    items = get_ipo_calendar(30)
     if not items:
-        return "📅 ไม่มี IPO ใน 7 วันข้างหน้า"
-    lines = ["📅 <b>IPO Calendar — 7 days</b>"]
-    for i in items[:15]:
-        date = i.get("date", "")
-        sym = html.escape(i.get("symbol", ""))
-        name = html.escape((i.get("name", "") or "")[:50])
-        price = i.get("price", "") or "TBD"
-        lines.append(f"• <code>{date}</code> {sym} — {name} <i>(${price})</i>")
+        return "📅 ไม่มี IPO ใน 30 วันข้างหน้า"
+
+    today = datetime.utcnow().date()
+    bucket_7 = []
+    bucket_15 = []
+    bucket_30 = []
+    for i in items:
+        try:
+            d = datetime.fromisoformat(i.get("date", "")).date()
+        except ValueError:
+            continue
+        days = (d - today).days
+        if days <= 7:
+            bucket_7.append(i)
+        elif days <= 15:
+            bucket_15.append(i)
+        elif days <= 30:
+            bucket_30.append(i)
+
+    def fmt(group: list) -> list[str]:
+        out = []
+        for i in group[:10]:
+            date = i.get("date", "")
+            sym = html.escape(i.get("symbol", "") or "—")
+            name = html.escape((i.get("name", "") or "")[:45])
+            price = i.get("price", "") or "TBD"
+            shares = i.get("numberOfShares", "")
+            shares_str = f", {int(shares):,} shares" if shares else ""
+            out.append(f"• <code>{date}</code> <b>{sym}</b> — {name} <i>(${price}{shares_str})</i>")
+        return out
+
+    lines = ["📅 <b>IPO Calendar</b>"]
+    lines.append(f"\n🔥 <b>This week (≤ 7 days)</b> — {len(bucket_7)}")
+    lines.extend(fmt(bucket_7) if bucket_7 else ["<i>(none)</i>"])
+    lines.append(f"\n📆 <b>Next 8–15 days</b> — {len(bucket_15)}")
+    lines.extend(fmt(bucket_15) if bucket_15 else ["<i>(none)</i>"])
+    lines.append(f"\n🗓 <b>16–30 days</b> — {len(bucket_30)}")
+    lines.extend(fmt(bucket_30) if bucket_30 else ["<i>(none)</i>"])
     return "\n".join(lines)
 
 
