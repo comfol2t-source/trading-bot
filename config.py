@@ -1,82 +1,111 @@
-"""Configuration for the trading bot.
+"""Configuration for the trading bot — Phase 1.6.
 
-Reads credentials from .env, defines default watchlists.
+Reads credentials from .env (local) or environment (GitHub Actions),
+defines themed watchlists, runner tags, alert thresholds, schedule logic.
 """
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# === Credentials (loaded from .env) ===
+# === Credentials ===
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 FINNHUB_API_KEY = os.getenv("FINNHUB_API_KEY")
 
 
-# === Anomaly detection thresholds ===
-ANOMALY_PCT_THRESHOLD = 5.0      # |% change| > 5% counts as unusual move
-ANOMALY_VOLUME_MULTIPLIER = 3.0  # volume > 3x 20-day average counts as spike
+# === Alert thresholds ===
+ANOMALY_PCT_THRESHOLD = 5.0       # Daily brief anomaly
+ANOMALY_VOLUME_MULTIPLIER = 3.0
+RUNNER_PCT_THRESHOLD = 7.0        # Realtime runner alert (stricter)
+RUNNER_VOLUME_MULTIPLIER = 5.0
+THB_MOVE_THRESHOLD = 1.0          # USD/THB |%change| triggers alert
+VIX_PANIC_THRESHOLD = 25.0        # VIX above triggers alert
+XD_ALERT_DAYS_AHEAD = 3           # Notify N days before XD
 
-# How many top gainers/losers to show in the brief
 TOP_MOVERS_COUNT = 3
-# How many news headlines to show
 NEWS_COUNT = 5
+NEWS_COUNT_HOURLY = 3              # Smaller for hourly briefs
 
 
 # === Watchlists organised by theme ===
 
 US_THEMES = {
+    # AI/Chip merged (user choice — kept together, includes Semiconductor pure-play)
     "AI / Chip": [
         "NVDA", "AMD", "SMCI", "ARM", "AVGO", "TSM", "MU", "PLTR",
-        "AI", "SOUN",
+        "AI", "SOUN", "INTC", "ASML", "AMAT", "LRCX", "KLAC",
     ],
     "EV / Space / Defense": [
         "TSLA", "ASTS", "RKLB", "JOBY", "ACHR", "LMT", "LUNR",
     ],
-    "Quantum": [
-        "IONQ", "RGTI", "QBTS", "QUBT",
+    "Quantum": ["IONQ", "RGTI", "QBTS", "QUBT"],
+    "Nuclear / Energy-US": ["SMR", "OKLO", "NNE", "CCJ", "VST"],
+    "Biotech Runners": ["VKTX", "RXRX", "RGEN", "MRNA"],
+    "Crypto Stocks": [
+        "MSTR", "COIN", "MARA", "CLSK", "RIOT", "HUT",
+        "IBIT", "GBTC", "ETHE",
     ],
-    "Nuclear / Energy": [
-        "SMR", "OKLO", "NNE", "CCJ", "VST",
-    ],
-    "Biotech Runners": [
-        "VKTX", "RXRX",
-    ],
-    "Crypto-Proxy (no direct crypto)": [
-        "MSTR", "COIN",
-    ],
+    "Energy (US)": ["XOM", "CVX", "COP", "OXY", "EOG", "SLB"],
+    "Medical (US)": ["UNH", "JNJ", "LLY", "PFE", "MRK", "ABBV"],
+    "Retail": ["AMZN", "WMT", "COST", "TGT", "HD"],
+    "Consumer Staples": ["PG", "KO", "PEP", "MCD"],
+    "Industrials": ["BA", "GE", "CAT", "DE"],
+    "Gold Mining": ["NEM", "GOLD", "FNV", "WPM", "AEM", "AU"],
 }
 
-# Flat US watchlist (derived from themes)
 US_WATCHLIST = [t for tickers in US_THEMES.values() for t in tickers]
 
-# Thai dividend stocks organised by sector
+# Crypto spot prices (not stocks — yfinance ticker format BTC-USD)
+CRYPTO_SPOT = ["BTC-USD", "ETH-USD"]
+
+# Thai dividend stocks (only requested sectors: Banking, Medical, Energy)
 THAI_THEMES = {
-    "Banking": ["KBANK.BK", "BBL.BK", "SCB.BK", "KTB.BK"],
-    "Energy / Utility": ["PTT.BK", "GULF.BK", "EGCO.BK", "RATCH.BK"],
-    "Telecom": ["ADVANC.BK", "TRUE.BK"],
-    "Property / REIT": ["CPNREIT.BK", "FTREIT.BK", "AIMIRT.BK"],
-    "Infrastructure": ["AOT.BK", "BEM.BK", "DIF.BK"],
+    "Banking": [
+        "KBANK.BK", "BBL.BK", "SCB.BK", "KTB.BK",
+        "TISCO.BK", "KKP.BK", "TTB.BK", "BAY.BK",
+        "LHFG.BK", "TCAP.BK",
+    ],
+    "Medical & Wellness": [
+        "BDMS.BK", "BH.BK", "BCH.BK", "CHG.BK", "RAM.BK", "RJH.BK",
+    ],
+    "Energy": [
+        "PTT.BK", "PTTEP.BK", "GULF.BK", "EGCO.BK", "RATCH.BK",
+        "BANPU.BK", "BCP.BK", "TOP.BK", "IRPC.BK",
+    ],
 }
 
 THAI_WATCHLIST = [t for tickers in THAI_THEMES.values() for t in tickers]
 
 # Macro indicators
-MACRO = [
-    "DX-Y.NYB",   # DXY — US Dollar Index
-    "^TNX",       # US 10-Year Treasury Yield
-    "^VIX",       # Volatility Index
-    "SPY",        # S&P 500 ETF
-    "QQQ",        # Nasdaq-100 ETF
-]
+MACRO = ["DX-Y.NYB", "^TNX", "^VIX", "SPY", "QQQ"]
 
-# Gold + FX (separate section)
-GOLD_FX = [
-    "GC=F",       # Gold Futures (USD/oz)
-    "GLD",        # SPDR Gold Trust ETF (USD-denominated gold)
-    "THB=X",      # USD/THB
-    "JPY=X",      # USD/JPY (safe-haven proxy)
-]
+# Gold + FX
+GOLD_FX = ["GC=F", "GLD", "THB=X"]
+
+
+# === Runner tags 🚀 — high-volatility momentum stocks ===
+# These get a 🚀 emoji in every section they appear in
+RUNNERS = {
+    # Quantum (all are runners)
+    "IONQ", "RGTI", "QBTS", "QUBT",
+    # Nuclear small-caps
+    "SMR", "OKLO", "NNE",
+    # Space/Defense small-caps
+    "ASTS", "RKLB", "LUNR", "JOBY", "ACHR",
+    # AI/Chip runners
+    "SMCI", "AI", "SOUN", "PLTR",
+    # Biotech runners
+    "VKTX", "RXRX", "MRNA",
+    # Crypto miners
+    "MARA", "CLSK", "RIOT", "HUT",
+    "MSTR", "COIN",
+}
+
+
+def is_runner(ticker: str) -> bool:
+    """Return True if ticker is tagged as a runner."""
+    return ticker.upper().replace(".BK", "").replace("-USD", "") in RUNNERS
 
 
 def validate():
@@ -91,6 +120,5 @@ def validate():
     if missing:
         raise RuntimeError(
             f"Missing environment variables: {', '.join(missing)}\n"
-            "Create a .env file in the project root (copy from .env.example) "
-            "and fill in your credentials."
+            "Create a .env file (local) or set GitHub Actions secrets."
         )

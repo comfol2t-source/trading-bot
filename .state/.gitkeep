@@ -1,0 +1,2 @@
+# This folder holds JSON state files that the bot writes and GitHub Actions commits back.
+# Keep this folder tracked even when empty.

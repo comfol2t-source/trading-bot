@@ -1,11 +1,23 @@
-"""Phase 1.5: Enhanced market brief with themes, top movers, anomalies, news.
+"""Trading bot entry point.
 
-Run with:
-    python main.py
+Usage:
+    python main.py auto       # smart cadence — used by GitHub Actions
+    python main.py full       # full brief now
+    python main.py hourly     # compact hourly brief
+    python main.py tenmin     # 10-min interval brief
+    python main.py alert      # alert check only
+    python main.py command    # poll Telegram commands
+    python main.py news       # news only
+    python main.py runner     # runner check only
+    python main.py weekly     # weekly recap
+    python main.py heat       # sector heat map
+    python main.py macro      # macro + gold + FX
+    python main.py thai       # thai watchlist
+    python main.py us         # us watchlist
 """
 import html
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 # Force UTF-8 console output for Windows Thai locale (CP874).
@@ -16,222 +28,219 @@ except (AttributeError, OSError):
     pass
 
 import config
-from analysis.anomaly import find_anomalies, top_movers
+from analysis.alerts import (
+    check_price_alerts, check_runners, check_thb_move, check_vix_panic,
+)
+from analysis.scheduler_logic import pick_jobs
+from bot import briefs, listener
 from bot.telegram_sender import send_message
-from data.news import get_general_news
 from data.prices import fetch_multiple
 
 
-# ---------- Formatting helpers ----------
-
-def _clean_name(ticker: str) -> str:
-    return (
-        ticker.replace(".BK", "")
-        .replace("=F", "")
-        .replace("=X", "")
-        .replace("^", "")
-        .replace("-Y.NYB", "")
-    )
+ICT = ZoneInfo("Asia/Bangkok")
 
 
-def _arrow(pct: float | None) -> str:
-    if pct is None:
-        return "⚪"
-    if pct > 0:
-        return "🟢"
-    if pct < 0:
-        return "🔴"
-    return "⚪"
+def _send_chunks(text: str) -> bool:
+    if len(text) <= 4000:
+        return send_message(text)
+    ok = True
+    chunks = []
+    current = []
+    cur_len = 0
+    for line in text.split("\n"):
+        if cur_len + len(line) + 1 > 3800 and current:
+            chunks.append("\n".join(current))
+            current = []
+            cur_len = 0
+        current.append(line)
+        cur_len += len(line) + 1
+    if current:
+        chunks.append("\n".join(current))
+    for c in chunks:
+        ok = send_message(c) and ok
+    return ok
 
 
-def _pct(pct: float | None) -> str:
-    if pct is None:
-        return "  n/a "
-    sign = "+" if pct > 0 else ""
-    return f"{sign}{pct:.2f}%"
+# ---------- Job handlers ----------
+
+def job_full_brief():
+    print("→ Job: full_brief")
+    _send_chunks(briefs.build_full_brief())
 
 
-def format_ticker_full(d: dict) -> str:
-    """Full line: ticker | price | 1D | 5D | 30D."""
-    name = html.escape(_clean_name(d["ticker"]))
-    arrow = _arrow(d.get("change_pct"))
-    return (
-        f'{arrow} <code>{name:<8}</code> '
-        f'{d["price"]:>10,.2f}  '
-        f'<b>{_pct(d.get("change_pct")):>8}</b>  '
-        f'5D {_pct(d.get("change_5d_pct")):>8}  '
-        f'30D {_pct(d.get("change_30d_pct")):>8}'
-    )
+def job_hourly_brief():
+    print("→ Job: hourly_brief")
+    _send_chunks(briefs.build_hourly_brief())
 
 
-def format_ticker_compact(d: dict) -> str:
-    """Compact one-liner: ticker price 1D%."""
-    name = html.escape(_clean_name(d["ticker"]))
-    arrow = _arrow(d.get("change_pct"))
-    return (
-        f'{arrow} <code>{name:<8}</code> '
-        f'{d["price"]:>10,.2f}  '
-        f'{_pct(d.get("change_pct"))}'
-    )
+def job_tenmin_brief():
+    print("→ Job: tenmin_brief")
+    _send_chunks(briefs.build_tenmin_brief())
 
 
-# ---------- Section builders ----------
-
-def section_macro(items: list[dict]) -> list[str]:
-    if not items:
-        return []
-    lines = ["🌎 <b>Macro</b>"]
-    lines.extend(format_ticker_compact(d) for d in items)
-    return lines + [""]
+def job_news():
+    print("→ Job: news")
+    _send_chunks(briefs.build_news_only())
 
 
-def section_gold_fx(items: list[dict]) -> list[str]:
-    if not items:
-        return []
-    lines = ["🥇 <b>Gold &amp; FX</b>"]
-    lines.extend(format_ticker_compact(d) for d in items)
-    return lines + [""]
+def job_runner():
+    print("→ Job: runner")
+    _send_chunks(briefs.build_runner_only())
 
 
-def section_themed(title: str, themes: dict[str, list[str]],
-                   data_by_ticker: dict[str, dict]) -> list[str]:
-    """Render a watchlist grouped by theme."""
-    lines = [f"<b>{title}</b>"]
-    for theme, tickers in themes.items():
-        items = [data_by_ticker[t] for t in tickers if t in data_by_ticker]
-        if not items:
-            continue
-        lines.append(f"<i>— {html.escape(theme)} —</i>")
-        lines.extend(format_ticker_full(d) for d in items)
-    return lines + [""]
+def job_alert_check():
+    """Check runner / price / THB / VIX alerts and push if triggered."""
+    print("→ Job: alert_check")
+    # Fetch a pool of prices once
+    us = fetch_multiple(config.US_WATCHLIST)
+    th = fetch_multiple(config.THAI_WATCHLIST)
+    macro = fetch_multiple(["^VIX", "THB=X"])
+    all_eq = us + th
+    prices_map = {d["ticker"]: d for d in all_eq + macro}
 
-
-def section_top_movers(items: list[dict], n: int) -> list[str]:
-    gainers, losers = top_movers(items, n)
-    lines = ["🔥 <b>Top Movers (1D)</b>"]
-    if gainers:
-        lines.append("📈 <i>Gainers</i>")
-        lines.extend(format_ticker_compact(d) for d in gainers)
-    if losers:
-        lines.append("📉 <i>Losers</i>")
-        lines.extend(format_ticker_compact(d) for d in losers)
-    return lines + [""]
-
-
-def section_anomalies(items: list[dict]) -> list[str]:
-    anoms = find_anomalies(items)
-    if not anoms:
-        return []
-    lines = ["⚠️ <b>Anomalies</b> <i>(unusual moves)</i>"]
-    for d, reasons in anoms:
-        name = html.escape(_clean_name(d["ticker"]))
-        reason_str = " + ".join(reasons)
-        arrow = _arrow(d.get("change_pct"))
-        lines.append(
-            f'{arrow} <code>{name:<8}</code> '
-            f'{d["price"]:>10,.2f}  '
-            f'<i>{reason_str}</i>'
+    # 1. Runner alerts
+    runners = check_runners(all_eq)
+    for r in runners:
+        name = html.escape(r["ticker"].replace(".BK", ""))
+        tag = "🚀" if config.is_runner(r["ticker"]) else ""
+        msg = (
+            f"🚨 <b>RUNNER ALERT</b> {tag}\n"
+            f"<code>{name}</code> {r['price']:,.2f}\n"
+            f"<i>{' + '.join(r['reasons'])}</i>"
         )
-    return lines + [""]
+        send_message(msg)
+
+    # 2. Price alerts (user-defined)
+    triggered = check_price_alerts(prices_map)
+    for a in triggered:
+        msg = (
+            f"💰 <b>PRICE ALERT</b>\n"
+            f"<code>{html.escape(a['ticker'])}</code> "
+            f"hit {a['op']} {a['price']:,.2f}\n"
+            f"Current: {a['current_price']:,.2f}"
+        )
+        send_message(msg)
+
+    # 3. USD/THB alert
+    thb = check_thb_move()
+    if thb:
+        sign = "+" if thb["delta_pct"] > 0 else ""
+        msg = (
+            f"💱 <b>USD/THB ALERT</b>\n"
+            f"{thb['last']:.4f} → {thb['current']:.4f} "
+            f"({sign}{thb['delta_pct']:.2f}%)\n"
+            f"บาท{thb['direction']} → กระทบราคาทองในไทย"
+        )
+        send_message(msg)
+
+    # 4. VIX panic
+    vix = check_vix_panic(prices_map)
+    if vix:
+        msg = (
+            f"📉 <b>VIX PANIC</b>\n"
+            f"VIX: {vix['vix']:.2f} ({vix.get('change_pct', 0):+.2f}%)\n"
+            f"<i>ตลาด nervous — ระวังเข้า trade ใหม่</i>"
+        )
+        send_message(msg)
 
 
-def section_news(news: list[dict]) -> list[str]:
-    if not news:
-        return []
-    lines = ["📰 <b>Market News</b>"]
-    for item in news:
-        headline = html.escape(item.get("headline", "")[:120])
-        source = html.escape(item.get("source", ""))
-        url = item.get("url", "")
-        if url:
-            lines.append(f'• <a href="{html.escape(url, quote=True)}">{headline}</a> <i>({source})</i>')
-        else:
-            lines.append(f"• {headline} <i>({source})</i>")
-    return lines + [""]
+def job_command_poll():
+    """Poll Telegram for new commands."""
+    print("→ Job: command_poll")
+    n = listener.poll_and_handle()
+    if n:
+        print(f"  Processed {n} command(s)")
 
 
-# ---------- Main ----------
+def job_weekly_recap():
+    """Friday 18:00 weekly summary."""
+    print("→ Job: weekly_recap")
+    us = fetch_multiple(config.US_WATCHLIST)
+    th = fetch_multiple(config.THAI_WATCHLIST)
+    all_eq = us + th
+    valid = [d for d in all_eq if d.get("change_5d_pct") is not None]
+    valid.sort(key=lambda d: d["change_5d_pct"], reverse=True)
 
-def build_brief() -> str:
-    now = datetime.now(ZoneInfo("Asia/Bangkok"))
+    now = datetime.now(ICT)
     lines = [
-        "📊 <b>Market Brief</b>",
-        f"<i>{now.strftime('%d %b %Y, %H:%M')} (Bangkok)</i>",
+        "📰 <b>Weekly Recap</b>",
+        f"<i>{now.strftime('%d %b %Y')} — สัปดาห์ที่ผ่านมา</i>",
         "",
     ]
+    if valid:
+        lines.append("🏆 <b>Top 5 winners (5D)</b>")
+        for d in valid[:5]:
+            lines.append(briefs.format_compact({**d, "change_pct": d["change_5d_pct"]}))
+        lines.append("")
+        lines.append("💀 <b>Top 5 losers (5D)</b>")
+        for d in list(reversed(valid))[:5]:
+            lines.append(briefs.format_compact({**d, "change_pct": d["change_5d_pct"]}))
+    _send_chunks("\n".join(lines))
 
-    print("→ Fetching macro...")
-    macro = fetch_multiple(config.MACRO)
 
-    print("→ Fetching gold & FX...")
-    gold_fx = fetch_multiple(config.GOLD_FX)
+def job_heat():
+    _send_chunks(briefs.build_heat_only())
 
-    print("→ Fetching US watchlist...")
-    us = fetch_multiple(config.US_WATCHLIST)
 
-    print("→ Fetching Thai watchlist...")
-    th = fetch_multiple(config.THAI_WATCHLIST)
+def job_macro():
+    _send_chunks(briefs.build_macro_only())
 
-    print("→ Fetching news...")
-    news = get_general_news(config.NEWS_COUNT)
 
-    # Build maps for theme rendering
-    us_by_ticker = {d["ticker"]: d for d in us}
-    th_by_ticker = {d["ticker"]: d for d in th}
+def job_thai():
+    _send_chunks(briefs.build_thai_only())
 
-    # All equities (US + Thai) for movers + anomalies
-    all_equities = us + th
 
-    # Compose sections
-    lines += section_macro(macro)
-    lines += section_gold_fx(gold_fx)
-    lines += section_top_movers(all_equities, config.TOP_MOVERS_COUNT)
-    lines += section_anomalies(all_equities)
-    lines += section_themed("🇺🇸 US Watchlist", config.US_THEMES, us_by_ticker)
-    lines += section_themed("🇹🇭 Thai Watchlist", config.THAI_THEMES, th_by_ticker)
-    lines += section_news(news)
+def job_us():
+    _send_chunks(briefs.build_us_only())
 
-    return "\n".join(lines)
+
+JOBS = {
+    "full_brief": job_full_brief,
+    "hourly_brief": job_hourly_brief,
+    "tenmin_brief": job_tenmin_brief,
+    "news": job_news,
+    "runner": job_runner,
+    "alert_check": job_alert_check,
+    "command_poll": job_command_poll,
+    "weekly_recap": job_weekly_recap,
+    "heat": job_heat,
+    "macro": job_macro,
+    "thai": job_thai,
+    "us": job_us,
+    # Aliases for manual use
+    "full": job_full_brief,
+    "hourly": job_hourly_brief,
+    "tenmin": job_tenmin_brief,
+    "alert": job_alert_check,
+    "command": job_command_poll,
+    "weekly": job_weekly_recap,
+}
 
 
 def main():
     config.validate()
-    print("Building market brief...\n")
-    msg = build_brief()
+    mode = sys.argv[1] if len(sys.argv) > 1 else "full"
 
-    print("\n--- Preview (first 1500 chars) ---")
-    print(msg[:1500])
-    if len(msg) > 1500:
-        print(f"... (+{len(msg) - 1500} more chars)")
-    print("--- End preview ---\n")
+    if mode == "auto":
+        # Smart cadence — used by GitHub Actions
+        jobs = pick_jobs()
+        print(f"Auto mode → jobs: {jobs}")
+        for j in jobs:
+            handler = JOBS.get(j)
+            if handler:
+                try:
+                    handler()
+                except Exception as e:
+                    print(f"  ! Job {j} failed: {type(e).__name__}: {e}")
+            else:
+                print(f"  ? Unknown job: {j}")
+        return
 
-    # Telegram limit is 4096 chars per message; split if needed.
-    print(f"Total message length: {len(msg)} chars")
-    print("Sending to Telegram...")
-
-    if len(msg) <= 4000:
-        ok = send_message(msg)
-    else:
-        # Split on blank lines so sections stay intact
-        chunks = []
-        current = []
-        current_len = 0
-        for line in msg.split("\n"):
-            if current_len + len(line) + 1 > 3800 and current:
-                chunks.append("\n".join(current))
-                current = []
-                current_len = 0
-            current.append(line)
-            current_len += len(line) + 1
-        if current:
-            chunks.append("\n".join(current))
-        print(f"Splitting into {len(chunks)} messages...")
-        ok = all(send_message(c) for c in chunks)
-
-    if ok:
-        print("✅ Sent successfully — check your Telegram!")
-    else:
-        print("❌ Send failed — see error above.")
+    handler = JOBS.get(mode)
+    if not handler:
+        print(f"Unknown mode '{mode}'. Available: {', '.join(sorted(JOBS))}")
+        sys.exit(1)
+    handler()
 
 
 if __name__ == "__main__":

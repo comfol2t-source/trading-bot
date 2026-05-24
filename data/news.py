@@ -1,20 +1,23 @@
-"""Fetch market news via Finnhub free API."""
+"""Fetch market news via Finnhub free API.
+
+Supports:
+  - General market news
+  - Per-ticker news
+  - Smart filter (only news mentioning watchlist tickers)
+  - Seen-news tracking (avoid duplicates)
+"""
 from datetime import datetime, timedelta
-from typing import Optional
 
 import requests
 
 import config
-
+from bot import state
 
 _BASE = "https://finnhub.io/api/v1"
 
 
 def get_general_news(limit: int = 5) -> list[dict]:
-    """Fetch top general market news.
-
-    Returns list of dicts with: headline, source, url, datetime (unix), summary.
-    """
+    """Fetch top general market news (US/world)."""
     try:
         r = requests.get(
             f"{_BASE}/news",
@@ -22,12 +25,9 @@ def get_general_news(limit: int = 5) -> list[dict]:
             timeout=10,
         )
         if r.status_code != 200:
-            print(f"  ! Finnhub news HTTP {r.status_code}")
             return []
-        items = r.json() or []
-        return items[:limit]
-    except requests.RequestException as e:
-        print(f"  ! Finnhub news error: {type(e).__name__}")
+        return (r.json() or [])[:limit]
+    except requests.RequestException:
         return []
 
 
@@ -48,7 +48,37 @@ def get_company_news(ticker: str, days_back: int = 3, limit: int = 2) -> list[di
         )
         if r.status_code != 200:
             return []
-        items = r.json() or []
-        return items[:limit]
+        return (r.json() or [])[:limit]
     except requests.RequestException:
         return []
+
+
+def get_fresh_news(limit: int = 5) -> list[dict]:
+    """Get general news, skipping any we've already pushed to Telegram."""
+    seen = state.get_seen_news()
+    fresh = []
+    for item in get_general_news(limit=20):
+        nid = str(item.get("id") or item.get("url") or "")
+        if not nid or nid in seen:
+            continue
+        fresh.append(item)
+        if len(fresh) >= limit:
+            break
+
+    # Mark as seen
+    if fresh:
+        state.add_seen_news([str(i.get("id") or i.get("url") or "") for i in fresh])
+    return fresh
+
+
+def filter_watchlist_news(news: list[dict], tickers: list[str]) -> list[dict]:
+    """Keep only news mentioning any watchlist ticker in headline/summary."""
+    if not tickers:
+        return news
+    keep = []
+    upper_tickers = {t.upper().replace(".BK", "").replace("-USD", "") for t in tickers}
+    for item in news:
+        text = (item.get("headline", "") + " " + item.get("summary", "")).upper()
+        if any(t in text for t in upper_tickers if len(t) >= 3):
+            keep.append(item)
+    return keep
