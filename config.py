@@ -85,9 +85,13 @@ THAI_WATCHLIST = [t for tickers in THAI_THEMES.values() for t in tickers]
 # Macro indicators
 MACRO = ["DX-Y.NYB", "^TNX", "^VIX", "SPY", "QQQ"]
 
-# Gold + Currencies
-GOLD_FX = [
+# Gold (own section)
+GOLD = [
     "GC=F",        # Gold futures (USD/oz)
+]
+
+# Currencies (own section)
+CURRENCIES = [
     "THB=X",       # USD/THB — Thai gold price proxy
     "JPY=X",       # USD/JPY — safe-haven currency
     "EURUSD=X",    # EUR/USD — major
@@ -95,6 +99,9 @@ GOLD_FX = [
     "CNY=X",       # USD/CNY — China impact
     "AUDUSD=X",    # AUD/USD — commodity currency
 ]
+
+# Kept as alias for backwards compat (used in alert sweeps)
+GOLD_FX = GOLD + CURRENCIES
 
 
 # === Runner tags 🚀 — high-volatility momentum stocks ===

@@ -83,6 +83,23 @@ def section_macro(items: list[dict]) -> list[str]:
     return lines + [""]
 
 
+def section_gold(items: list[dict]) -> list[str]:
+    if not items:
+        return []
+    lines = ["🥇 <b>Gold</b>"]
+    lines.extend(format_compact(d) for d in items)
+    return lines + [""]
+
+
+def section_currencies(items: list[dict]) -> list[str]:
+    if not items:
+        return []
+    lines = ["💱 <b>Currencies</b>"]
+    lines.extend(format_compact(d) for d in items)
+    return lines + [""]
+
+
+# Backwards-compat alias (combined render)
 def section_gold_fx(items: list[dict]) -> list[str]:
     if not items:
         return []
@@ -185,7 +202,8 @@ def build_full_brief() -> str:
     lines = _header("Market Brief — Full")
 
     macro = fetch_multiple(config.MACRO)
-    gold_fx = fetch_multiple(config.GOLD_FX)
+    gold = fetch_multiple(config.GOLD)
+    currencies = fetch_multiple(config.CURRENCIES)
     us = fetch_multiple(config.US_WATCHLIST)
     th = fetch_multiple(config.THAI_WATCHLIST)
     crypto = fetch_multiple(config.CRYPTO_SPOT)
@@ -202,7 +220,8 @@ def build_full_brief() -> str:
     news = relevant_news[:config.NEWS_COUNT] if relevant_news else general[:config.NEWS_COUNT]
 
     lines += section_macro(macro)
-    lines += section_gold_fx(gold_fx)
+    lines += section_gold(gold)
+    lines += section_currencies(currencies)
     if crypto:
         lines.append("🪙 <b>Crypto Spot</b>")
         lines.extend(format_compact(d) for d in crypto)
@@ -222,14 +241,16 @@ def build_hourly_brief() -> str:
     lines = _header("Market Pulse — Hourly")
 
     macro = fetch_multiple(config.MACRO)
-    gold_fx = fetch_multiple(config.GOLD_FX)
+    gold = fetch_multiple(config.GOLD)
+    currencies = fetch_multiple(config.CURRENCIES)
     us = fetch_multiple(config.US_WATCHLIST)
     th = fetch_multiple(config.THAI_WATCHLIST)
 
     all_equities = us + th
 
     lines += section_macro(macro)
-    lines += section_gold_fx(gold_fx)
+    lines += section_gold(gold)
+    lines += section_currencies(currencies)
     lines += section_top_movers(all_equities, config.TOP_MOVERS_COUNT)
     lines += section_anomalies(all_equities)
 
@@ -282,9 +303,10 @@ def build_heat_only() -> str:
 
 
 def build_macro_only() -> str:
-    lines = _header("Macro + Currencies + Gold")
+    lines = _header("Macro + Gold + Currencies")
     lines += section_macro(fetch_multiple(config.MACRO))
-    lines += section_gold_fx(fetch_multiple(config.GOLD_FX))
+    lines += section_gold(fetch_multiple(config.GOLD))
+    lines += section_currencies(fetch_multiple(config.CURRENCIES))
     crypto = fetch_multiple(config.CRYPTO_SPOT)
     if crypto:
         lines.append("🪙 <b>Crypto Spot</b>")
