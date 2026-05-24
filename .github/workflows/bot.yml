@@ -1,9 +1,9 @@
 name: Trading Bot
 
 on:
-  # Run every 10 minutes
+  # Run every minute — repo is public so Actions are unlimited
   schedule:
-    - cron: '*/10 * * * *'
+    - cron: '* * * * *'
   # Allow manual trigger from Actions tab
   workflow_dispatch:
   # Run on push to main (useful for testing config changes)
